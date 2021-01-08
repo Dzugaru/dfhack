@@ -1,3 +1,9 @@
+# Fork Readme
+
+Just my personal sandbox.
+Current features:
+- nodigcancel: revert dig designations and unpause if encountered damp stone (useful when mining in aquifer)
+
 # DFHack Readme
 
 [![Build Status](https://github.com/DFHack/dfhack/workflows/Build/badge.svg?event=push)](https://github.com/DFHack/dfhack/actions?query=workflow%3ABuild)
