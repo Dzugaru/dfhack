@@ -1,32 +1,33 @@
-#include <stdint.h>
+#include <algorithm>
 #include <iostream>
 #include <map>
+#include <stdint.h>
+#include <unordered_set>
 #include <vector>
-#include "Core.h"
+
 #include "Console.h"
+#include "Core.h"
 #include "Export.h"
+#include "MiscUtils.h"
 #include "PluginManager.h"
 #include "modules/EventManager.h"
+#include "modules/Gui.h"
+#include "modules/Job.h"
+#include "modules/MapCache.h"
 #include "modules/Maps.h"
 #include "modules/Units.h"
 #include "modules/World.h"
-#include "modules/MapCache.h"
-#include "modules/Gui.h"
-#include "modules/Job.h"
-#include "MiscUtils.h"
 #include "uicommon.h"
-#include <algorithm>
-#include <unordered_set>
 
+#include "df/announcements.h"
 #include "df/block_square_event_frozen_liquidst.h"
 #include "df/construction.h"
-#include "df/world.h"
-#include "df/report.h"
-#include "df/announcements.h"
-#include "df/unit.h"
 #include "df/general_ref_unit_workerst.h"
-#include "df/viewscreen_dwarfmodest.h"
+#include "df/report.h"
 #include "df/ui_look_list.h"
+#include "df/unit.h"
+#include "df/viewscreen_dwarfmodest.h"
+#include "df/world.h"
 
 using MapExtras::MapCache;
 
@@ -66,7 +67,7 @@ int last_dig_cancel_repeats = -1;
 void nodigcancel_update(color_ostream& out);
 
 //TODO: save/load this from file
-std::unordered_set<std::string> forbid_freshly_mined;
+std::unordered_set<string> forbid_freshly_mined;
 
 command_result nodigcancel(color_ostream& out, vector <string>& parameters)
 {
@@ -75,7 +76,7 @@ command_result nodigcancel(color_ostream& out, vector <string>& parameters)
         if (parameters[0] == "0")
             nodigcancel_state = 0;
         else
-            nodigcancel_state = 1;           
+            nodigcancel_state = 1;
         out.print("nodigcancel %sactivated.\n", (nodigcancel_state ? "" : "de"));
     }
     else
@@ -101,15 +102,15 @@ void nodigcancel_save(color_ostream& out)
             for (int y = 0; y < 16; y++)
             {
                 df::tile_dig_designation dig = bl->designation[x][y].bits.dig;
-                if (dig != df::enums::tile_dig_designation::No)
+                if (dig != tile_dig_designation::No)
                 {
                     df::tiletype tt = bl->tiletype[x][y];
                     df::tiletype_material ttm = ENUM_ATTR(tiletype, material, tt);
                     df::tiletype_shape tts = ENUM_ATTR(tiletype, shape, tt);
-                    if (ttm != df::enums::tiletype_material::TREE && tts != df::enums::tiletype_shape::SHRUB)
+                    if (ttm != tiletype_material::TREE && tts != tiletype_shape::SHRUB)
                     {
-                        dig_designation dd = { i, x, y, dig };                        
-                        saved_dig.push_back(dd);                            
+                        dig_designation dd = { i, x, y, dig };
+                        saved_dig.push_back(dd);
                     }
                 }
             }
@@ -126,7 +127,7 @@ void nodigcancel_save(color_ostream& out)
         if (!DFHack::Units::isActive(u))
             continue;
 
-        if (u->job.current_job != NULL && u->job.current_job->job_type == df::enums::job_type::Dig)
+        if (u->job.current_job != NULL && u->job.current_job->job_type == job_type::Dig)
         {
             saved_dig_jobs.push_back(Job::cloneJobStruct(u->job.current_job, true));
         }
@@ -152,11 +153,11 @@ void nodigcancel_fix(color_ostream& out)
             c.z = bl->map_pos.z;
 
             out.print("Fixing back dig designation at %d %d %d...\n", c.x, c.y, c.z);
-            
+
             //Fix back the designation
             bl->designation[sd.x][sd.y].bits.dig = sd.dig_type;
             bl->flags.bits.designated = true;
-            out.print("... fixed by revert designation\n");            
+            out.print("... fixed by revert designation\n");
 
             //Designation is back, but the job was canceled anyway
             //We need to find the digger somehow
@@ -178,7 +179,7 @@ void nodigcancel_fix(color_ostream& out)
                         {
                             //TODO: ideally we want to set back his canceled job, but thats rather tricky,
                             //so lets just cancel his new pathfinding for now if he has already something other to do
-                            //(his new job will be canceled too)                            
+                            //(his new job will be canceled too)
                             u->path.path.x.clear();
                             u->path.path.y.clear();
                             u->path.path.z.clear();
@@ -198,19 +199,19 @@ void nodigcancel_fix(color_ostream& out)
 
                     if (found_digger)
                         break;
-                }                
-            }            
+                }
+            }
         }
     }
 }
 
 void nodigcancel_update(color_ostream& out)
-{    
+{
     int n = world->status.announcements.size();
     if (n > 0)
     {
         df::report* last_ann = world->status.announcements[n - 1];
-        if (last_ann->type == df::enums::announcement_type::DIG_CANCEL_DAMP &&
+        if (last_ann->type == announcement_type::DIG_CANCEL_DAMP &&
             (last_ann->id > last_dig_cancel_announce_id || last_ann->repeat_count > last_dig_cancel_repeats))
         {
             last_dig_cancel_announce_id = last_ann->id;
@@ -225,9 +226,9 @@ void nodigcancel_update(color_ostream& out)
             }
         }
     }
-    
+
     nodigcancel_save(out);
-    nodigcancel_init = true;    
+    nodigcancel_init = true;
 }
 
 void onDig(color_ostream& out, void* ptr)
@@ -237,12 +238,12 @@ void onDig(color_ostream& out, void* ptr)
     if (job->completion_timer > 0)
         return;
 
-    if (job->job_type != df::enums::job_type::Dig &&
-        job->job_type != df::enums::job_type::CarveUpwardStaircase &&
-        job->job_type != df::enums::job_type::CarveDownwardStaircase &&
-        job->job_type != df::enums::job_type::CarveUpDownStaircase &&
-        job->job_type != df::enums::job_type::CarveRamp &&
-        job->job_type != df::enums::job_type::DigChannel)
+    if (job->job_type != job_type::Dig &&
+        job->job_type != job_type::CarveUpwardStaircase &&
+        job->job_type != job_type::CarveDownwardStaircase &&
+        job->job_type != job_type::CarveUpDownStaircase &&
+        job->job_type != job_type::CarveRamp &&
+        job->job_type != job_type::DigChannel)
         return;
 
     auto& items = world->items.other[items_other_id::IN_PLAY];
@@ -258,31 +259,31 @@ void onDig(color_ostream& out, void* ptr)
         if (chebyshev_dist(item->pos, job->pos) > 1 || item->age > 3)
             continue;
         ItemTypeInfo itinfo(item);
-        if (itinfo.type != df::enums::item_type::BOULDER)
+        if (itinfo.type != item_type::BOULDER)
             continue;
         MaterialInfo minfo(item);
         if (forbid_freshly_mined.count(minfo.toString()) == 0)
             continue;
 
         item->flags.bits.forbid = 1;
-    }    
+    }
 }
 
 struct dwarfmode_hook : public df::viewscreen_dwarfmodest
 {
-    typedef df::viewscreen_dwarfmodest interpose_base;    
-    
-    static std::string getSelectedBoulderMat()
+    typedef df::viewscreen_dwarfmodest interpose_base;
+
+    static string getSelectedBoulderMat()
     {
         if (ui->main.mode != df::ui_sidebar_mode::LookAround)
-            return std::string();
+            return string();
         auto el = vector_get(ui_look_list->items, *ui_look_cursor);
         if (el == NULL || el->type != df::ui_look_list::T_items::T_type::Item)
-            return std::string();
+            return string();
         auto item = el->data.Item;
         ItemTypeInfo itinfo(item);
-        if (itinfo.type != df::enums::item_type::BOULDER)
-            return std::string();
+        if (itinfo.type != item_type::BOULDER)
+            return string();
         MaterialInfo minfo(item);
         return minfo.toString();
     }
@@ -318,7 +319,7 @@ struct dwarfmode_hook : public df::viewscreen_dwarfmodest
         int left_margin = dims.menu_x1 + 1;
         int x = left_margin;
         int y = dims.y2;
-        
+
         auto text = isEnabled ? "autoforbid: on" : "autoforbid: off";
         OutputHotkeyString(x, y, text, "Alt+f", false, 0, COLOR_WHITE, COLOR_LIGHTRED);
     }
@@ -326,7 +327,6 @@ struct dwarfmode_hook : public df::viewscreen_dwarfmodest
 
 IMPLEMENT_VMETHOD_INTERPOSE(dwarfmode_hook, feed);
 IMPLEMENT_VMETHOD_INTERPOSE(dwarfmode_hook, render);
-
 
 DFhackCExport command_result plugin_init(color_ostream& out, vector <PluginCommand>& commands)
 {
@@ -368,6 +368,6 @@ DFhackCExport command_result plugin_shutdown(color_ostream& out)
     INTERPOSE_HOOK(dwarfmode_hook, render).remove();
     INTERPOSE_HOOK(dwarfmode_hook, feed).remove();
     EventManager::unregisterAll(plugin_self);
-    return CR_OK;        
+    return CR_OK;
 }
 
