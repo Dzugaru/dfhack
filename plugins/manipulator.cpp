@@ -60,33 +60,34 @@ struct SkillLevel
     const char *name;
     int points;
     char abbrev;
+    color_value color;
 };
 
 #define NUM_SKILL_LEVELS (sizeof(skill_levels) / sizeof(SkillLevel))
 
 // The various skill rankings. Zero skill is hardcoded to "Not" and '-'.
 const SkillLevel skill_levels[] = {
-    {"Dabbling",     500, '0'},
-    {"Novice",       600, '1'},
-    {"Adequate",     700, '2'},
-    {"Competent",    800, '3'},
-    {"Skilled",      900, '4'},
-    {"Proficient",  1000, '5'},
-    {"Talented",    1100, '6'},
-    {"Adept",       1200, '7'},
-    {"Expert",      1300, '8'},
-    {"Professional",1400, '9'},
-    {"Accomplished",1500, 'A'},
-    {"Great",       1600, 'B'},
-    {"Master",      1700, 'C'},
-    {"High Master", 1800, 'D'},
-    {"Grand Master",1900, 'E'},
-    {"Legendary",   2000, 'U'},
-    {"Legendary+1", 2100, 'V'},
-    {"Legendary+2", 2200, 'W'},
-    {"Legendary+3", 2300, 'X'},
-    {"Legendary+4", 2400, 'Y'},
-    {"Legendary+5",    0, 'Z'}
+    {"Dabbling",     500, '0', color_value::COLOR_WHITE},
+    {"Novice",       600, '1', color_value::COLOR_WHITE},
+    {"Adequate",     700, '2', color_value::COLOR_WHITE},
+    {"Competent",    800, '3', color_value::COLOR_WHITE},
+    {"Skilled",      900, '4', color_value::COLOR_WHITE},
+    {"Proficient",  1000, '5', color_value::COLOR_BLUE},
+    {"Talented",    1100, '6', color_value::COLOR_BLUE},
+    {"Adept",       1200, '7', color_value::COLOR_BLUE},
+    {"Expert",      1300, '8', color_value::COLOR_BLUE},
+    {"Professional",1400, '9', color_value::COLOR_BLUE},
+    {"Accomplished",1500, 'A', color_value::COLOR_BLUE},
+    {"Great",       1600, 'B', color_value::COLOR_BLUE},
+    {"Master",      1700, 'C', color_value::COLOR_BLUE},
+    {"High Master", 1800, 'D', color_value::COLOR_BLUE},
+    {"Grand Master",1900, 'E', color_value::COLOR_BLUE},
+    {"Legendary",   2000, 'U', color_value::COLOR_BROWN},
+    {"Legendary+1", 2100, 'V', color_value::COLOR_BROWN},
+    {"Legendary+2", 2200, 'W', color_value::COLOR_BROWN},
+    {"Legendary+3", 2300, 'X', color_value::COLOR_BROWN},
+    {"Legendary+4", 2400, 'Y', color_value::COLOR_BROWN},
+    {"Legendary+5",    0, 'Z', color_value::COLOR_BROWN}
 };
 
 struct SkillColumn
@@ -337,6 +338,7 @@ string itos (int n)
 bool descending;
 df::job_skill sort_skill;
 df::unit_labor sort_labor;
+bool filter_children;
 
 bool sortByName (const UnitInfo *d1, const UnitInfo *d2)
 {
@@ -1133,7 +1135,7 @@ public:
     ~viewscreen_unitlaborsst() { };
 
 protected:
-    vector<UnitInfo *> units;
+    vector<UnitInfo *> unfiltered_units, units;
     altsort_mode altsort;
 
     bool do_refresh_names;
@@ -1148,6 +1150,7 @@ protected:
     void refreshNames();
     void calcIDs();
     void calcSize ();
+    void calcFilter();
 };
 
 viewscreen_unitlaborsst::viewscreen_unitlaborsst(vector<df::unit*> &src, int cursor_pos)
@@ -1195,12 +1198,13 @@ viewscreen_unitlaborsst::viewscreen_unitlaborsst(vector<df::unit*> &src, int cur
 
         cur->color = Units::getProfessionColor(unit);
 
-        units.push_back(cur);
+        unfiltered_units.push_back(cur);
     }
     altsort = ALTSORT_NAME;
     detail_mode = DETAIL_MODE_PROFESSION;
     first_column = sel_column = 0;
 
+    calcFilter();
     refreshNames();
     calcIDs();
 
@@ -1220,6 +1224,17 @@ viewscreen_unitlaborsst::viewscreen_unitlaborsst(vector<df::unit*> &src, int cur
         first_row = units.size() - num_rows;
 
     last_selection = -1;
+}
+
+void viewscreen_unitlaborsst::calcFilter()
+{
+    units.clear();
+    for (size_t i = 0; i < unfiltered_units.size(); i++)
+    {
+        auto unit = unfiltered_units[i];
+        if (!filter_children || ENUM_ATTR(profession, can_assign_labor, unit->unit->profession))
+            units.push_back(unit);
+    }
 }
 
 void viewscreen_unitlaborsst::calcIDs()
@@ -1431,6 +1446,10 @@ void viewscreen_unitlaborsst::calcSize()
     // if it shrinks horizontally, scroll to the right to keep the cursor visible
     if (first_column < sel_column - col_widths[DISP_COLUMN_LABORS] + 1)
         first_column = sel_column - col_widths[DISP_COLUMN_LABORS] + 1;
+
+    // fix selected row if filter was applied
+    if (sel_row >= units.size())
+        sel_row = units.size() - 1;
 }
 
 void viewscreen_unitlaborsst::feed(set<df::interface_key> *events)
@@ -1903,6 +1922,15 @@ void viewscreen_unitlaborsst::feed(set<df::interface_key> *events)
             }
         }
     }
+
+    if (events->count(interface_key::CUSTOM_ALT_C))
+    {
+        filter_children = !filter_children;
+
+        calcFilter();
+        calcIDs();
+        calcSize();
+    }
 }
 
 void viewscreen_unitlaborsst::render()
@@ -2055,8 +2083,6 @@ void viewscreen_unitlaborsst::render()
             fg = 15;
             bg = 0;
             uint8_t c = 0xFA;
-            if ((col_offset == sel_column) && (row_offset == sel_row))
-                fg = 9;
             if (columns[col_offset].skill != job_skill::NONE)
             {
                 df::unit_skill *skill = NULL;
@@ -2068,6 +2094,8 @@ void viewscreen_unitlaborsst::render()
                     if (level > NUM_SKILL_LEVELS - 1)
                         level = NUM_SKILL_LEVELS - 1;
                     c = skill_levels[level].abbrev;
+                    if(columns[col_offset].labor != unit_labor::NONE)
+                        fg = skill_levels[level].color;
                 }
                 else
                     c = '-';
@@ -2083,6 +2111,8 @@ void viewscreen_unitlaborsst::render()
             }
             else
                 bg = 3;
+            if ((col_offset == sel_column) && (row_offset == sel_row))
+                fg = 9;
             Screen::paintTile(Screen::Pen(c, fg, bg), col_offsets[DISP_COLUMN_LABORS] + col, 4 + row);
         }
     }
@@ -2219,6 +2249,9 @@ void viewscreen_unitlaborsst::render()
         OutputString(15, x, y, "Unknown");
         break;
     }
+    OutputString(15, x, y, ", ");
+    OutputString(10, x, y, "Alt+C");
+    OutputString(15, x, y, string(": Toggle child filter ") + string(filter_children ? "off" : "on"));
 
     x = 2; y = dim.y - 2;
     OutputString(10, x, y, Screen::getKeyDisplay(interface_key::CUSTOM_X));
