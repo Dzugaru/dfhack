@@ -3,6 +3,7 @@
 Just my personal sandbox.
 Current features:
 - nodigcancel: revert dig designations and unpause if encountered damp stone (useful when mining in aquifer)
+- autoforbidboulders: mark stone types on look (k) screen to immediately forbid that type when freshly mined (useful when mining in dangerous areas)
 
 # DFHack Readme
 
