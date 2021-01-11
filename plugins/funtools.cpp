@@ -28,6 +28,7 @@
 #include "df/unit.h"
 #include "df/viewscreen_dwarfmodest.h"
 #include "df/world.h"
+#include "df/d_init.h"
 
 using MapExtras::MapCache;
 
@@ -45,6 +46,8 @@ REQUIRE_GLOBAL(process_dig);
 REQUIRE_GLOBAL(ui);
 REQUIRE_GLOBAL(ui_look_list);
 REQUIRE_GLOBAL(ui_look_cursor);
+REQUIRE_GLOBAL(cursor);
+REQUIRE_GLOBAL(d_init);
 
 void onDig(color_ostream& out, void* ptr);
 EventManager::EventHandler digHandler(onDig, 0);
@@ -62,8 +65,11 @@ struct dig_designation
 bool nodigcancel_init = false;
 vector<dig_designation> saved_dig;
 vector<df::job*> saved_dig_jobs;
+//vector<dig_designation> fixes;
 int last_dig_cancel_announce_id = -1;
 int last_dig_cancel_repeats = -1;
+
+uint32_t recenter_bit;
 void nodigcancel_update(color_ostream& out);
 
 //TODO: save/load this from file
@@ -71,12 +77,21 @@ std::unordered_set<string> forbid_freshly_mined;
 
 command_result nodigcancel(color_ostream& out, vector <string>& parameters)
 {
+    CoreSuspender alice;
     if (parameters.size() == 1 && (parameters[0] == "0" || parameters[0] == "1"))
     {
+        auto& flags = d_init->announcements.flags[announcement_type::DIG_CANCEL_DAMP];
         if (parameters[0] == "0")
+        {
             nodigcancel_state = 0;
+            flags.bits.RECENTER = recenter_bit;
+        }
         else
-            nodigcancel_state = 1;
+        {
+            nodigcancel_state = 1;            
+            recenter_bit = flags.bits.RECENTER;
+            flags.bits.RECENTER = 0;
+        }
         out.print("nodigcancel %sactivated.\n", (nodigcancel_state ? "" : "de"));
     }
     else
@@ -139,25 +154,76 @@ int chebyshev_dist(df::coord a, df::coord b)
     return max(max(abs(a.x - b.x), abs(a.y - b.y)), abs(a.z - b.z));
 }
 
+bool isWall(tiletype::tiletype t)
+{
+    return t == tiletype::StoneWall || t == tiletype::SoilWall || t == tiletype::MineralWall;
+}
+
+//void nodigcancel_fix_on_fix(color_ostream& out)
+//{
+//    for (size_t i = 0; i < fixes.size(); i++)
+//    {
+//        auto f = fixes[i];
+//        auto bl = world->map.map_blocks[f.block_idx];
+//        auto dig = bl->designation[f.x][f.y].bits.dig;
+//        auto ttype = bl->tiletype[f.x][f.y];
+//
+//        if (!isWall(ttype))
+//        {
+//            if (dig != tile_dig_designation::No)
+//            {
+//                bl->designation[f.x][f.y].bits.dig = tile_dig_designation::No;                
+//            }
+//            vector_erase_at(fixes, i);
+//            i--;
+//        }
+//    }    
+//}
+
 void nodigcancel_fix(color_ostream& out)
 {
+    //Already assigned (usually adjacent to already digged tiles) dig jobs
+    //These jobs will complement bl->designation[][].bits.dig tiles
+    unordered_set<df::coord> jobDigLocations;
+    for (df::job_list_link* link = &world->jobs.list; link != NULL; link = link->next) {
+        if (link->item == NULL)
+            continue;
+
+        if (link->item->job_type != job_type::Dig &&
+            link->item->job_type != job_type::CarveUpwardStaircase &&
+            link->item->job_type != job_type::CarveDownwardStaircase &&
+            link->item->job_type != job_type::CarveUpDownStaircase &&
+            link->item->job_type != job_type::CarveRamp &&
+            link->item->job_type != job_type::DigChannel)
+            continue;
+
+        jobDigLocations.insert(link->item->pos);
+    }
+
     for each (auto sd in saved_dig)
     {
         auto bl = world->map.map_blocks[sd.block_idx];
         auto dig = bl->designation[sd.x][sd.y].bits.dig;
-        if (sd.dig_type != dig)
+        auto ttype = bl->tiletype[sd.x][sd.y];        
+
+        if (sd.dig_type != dig && isWall(ttype))
         {
             df::coord c;
             c.x = bl->map_pos.x + sd.x;
             c.y = bl->map_pos.y + sd.y;
             c.z = bl->map_pos.z;
 
-            out.print("Fixing back dig designation at %d %d %d...\n", c.x, c.y, c.z);
+            if (jobDigLocations.count(c) == 1) //changed tile already has a dig job, no need to fix
+                continue;
 
-            //Fix back the designation
+            out.print("Fixing back dig designation at %d %d %d (%d %d %d)...\n", sd.block_idx, sd.x, sd.y, c.x, c.y, c.z);
+
+            //Fix back the designation           
             bl->designation[sd.x][sd.y].bits.dig = sd.dig_type;
             bl->flags.bits.designated = true;
-            out.print("... fixed by revert designation\n");
+            //out.print("... fixed by revert designation\n");
+
+            //fixes.push_back(sd);
 
             //Designation is back, but the job was canceled anyway
             //We need to find the digger somehow
@@ -228,6 +294,7 @@ void nodigcancel_update(color_ostream& out)
     }
 
     nodigcancel_save(out);
+    //nodigcancel_fix_on_fix(out);
     nodigcancel_init = true;
 }
 
@@ -265,6 +332,20 @@ void onDig(color_ostream& out, void* ptr)
         if (forbid_freshly_mined.count(minfo.toString()) == 0)
             continue;
 
+        if (item->flags.bits.in_job) //Someone already (sic!) wants to drag it somewhere
+        {
+            df::job* job;
+            for each (auto ref in item->specific_refs)
+            {
+                if (ref->type == specific_ref_type::JOB)
+                {
+                    job = ref->data.job;
+                    break;
+                }
+            }
+            Job::removeJob(job);
+        }        
+
         item->flags.bits.forbid = 1;
     }
 }
@@ -277,6 +358,21 @@ struct dwarfmode_hook : public df::viewscreen_dwarfmodest
     {
         if (ui->main.mode != df::ui_sidebar_mode::LookAround)
             return string();
+
+        /*auto x = cursor->x % 16;
+        auto y = cursor->y % 16;
+        auto bl = Maps::getTileBlock(cursor->x, cursor->y, cursor->z);       
+        auto ttype = bl->tiletype[x][y];
+        auto lf = bl->liquid_flow[x][y];
+        auto des = bl->designation[x][y];
+        auto occ = bl->occupancy[x][y];
+        auto unk13 = bl->unk13[x][y];
+        auto temp1 = bl->temperature_1[x][y];
+        auto temp2 = bl->temperature_2[x][y];
+        auto walkable = bl->walkable[x][y];*/
+        //if (ttype == tiletype::Chasm || lf.bits.unk_1)
+        //    return string();
+
         auto el = vector_get(ui_look_list->items, *ui_look_cursor);
         if (el == NULL || el->type != df::ui_look_list::T_items::T_type::Item)
             return string();
@@ -300,7 +396,7 @@ struct dwarfmode_hook : public df::viewscreen_dwarfmodest
             if (!isEnabled)
                 forbid_freshly_mined.insert(mat);
             else
-                forbid_freshly_mined.erase(mat);
+                forbid_freshly_mined.erase(mat);            
         }
         INTERPOSE_NEXT(feed)(input);
     }

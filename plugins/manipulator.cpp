@@ -1929,6 +1929,7 @@ void viewscreen_unitlaborsst::feed(set<df::interface_key> *events)
 
         calcFilter();
         calcIDs();
+        refreshNames();
         calcSize();
     }
 }
